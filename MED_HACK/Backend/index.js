@@ -1,11 +1,9 @@
 // backend/index.js
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import xrplRoutes from './routes/xrpl.js';
 import ocrRoutes from './routes/ocr.js'
-import testRoutes from './routes/test.js'
-import loanRoutes from './routes/loan.js';
+import donateRoutes from './routes/donation.js'
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -21,11 +19,7 @@ app.get('/', (req, res) => {
 // XRPL related routes
 app.use('/xrpl', xrplRoutes);
 app.use('/ocr', ocrRoutes)
-
-// FIREBASE route
-app.use('/api', testRoutes);
-app.use('/pay', loanRoutes);
-
+app.use('/donate', donateRoutes)
 app.listen(port, () => {
   console.log(`Backend server running at http://localhost:${port}`);
 });
