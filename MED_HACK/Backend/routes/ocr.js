@@ -1,12 +1,12 @@
+// routes/analyze-and-estimate.js
 import express from 'express'
 import multer from 'multer'
 import vision from '@google-cloud/vision'
 import { OpenAI } from 'openai'
 import dotenv from 'dotenv'
 import { db } from '../firebase.js'
-import xprl from 'xrpl'
-// If using modular Firestore client SDK, uncomment:
-// import { collection, addDoc } from 'firebase/firestore'
+import xrpl from 'xrpl'
+
 
 dotenv.config()
 const router = express.Router()
@@ -17,7 +17,6 @@ const visionClient = new vision.ImageAnnotatorClient({
   keyFilename: './keys/google-vision.json'
 })
 
-
 router.post('/analyze-and-estimate', upload.single('file'), async (req, res) => {
   console.log('🛠️  /analyze-and-estimate invoked')
   console.log('req.file =', req.file)
@@ -27,7 +26,15 @@ router.post('/analyze-and-estimate', upload.single('file'), async (req, res) => 
     return res.status(400).json({ error: 'No file received' })
   }
 
+  // Pull dynamically provided ownerAddress & userId
   const insuranceName = req.body.insuranceName?.trim() || 'None'
+  const ownerAddress  = req.body.ownerAddress?.trim()
+  const userId        = req.body.userId?.trim() || 'anon'
+
+  // Validate the beneficiary address
+  if (!ownerAddress || !xrpl.isValidClassicAddress(ownerAddress)) {
+    return res.status(400).json({ error: 'Invalid or missing ownerAddress' })
+  }
 
   try {
     // 1) OCR
@@ -37,10 +44,6 @@ router.post('/analyze-and-estimate', upload.single('file'), async (req, res) => 
     if (!fullText) {
       return res.status(400).json({ error: 'No text detected in image' })
     }
-
-    console.log(`\n===== OCR Raw TextAnnotations (first 5) =====`)
-    console.log(result.textAnnotations.slice(0,5).map(a => a.description))
-    console.log('===========================================\n')
 
     // Convert to word blocks with average X/Y
     const wordBlocks = result.textAnnotations.slice(1).map(w => {
@@ -53,14 +56,9 @@ router.post('/analyze-and-estimate', upload.single('file'), async (req, res) => 
       }
     })
 
-    console.log(`Found ${wordBlocks.length} word blocks`)    
-    wordBlocks.slice(0, 10).forEach((wb,i) =>
-      console.log(i, wb.text, `Y:${wb.avgY.toFixed(1)}`, `X:${wb.avgX.toFixed(1)}`)
-    )
-
     // Group into rows by Y proximity
     const rows = []
-    wordBlocks.sort((a,b) => a.avgY - b.avgY).forEach(wb => {
+    wordBlocks.sort((a, b) => a.avgY - b.avgY).forEach(wb => {
       const existing = rows.find(r => Math.abs(r.avgY - wb.avgY) < 10)
       if (existing) {
         existing.words.push(wb)
@@ -70,24 +68,10 @@ router.post('/analyze-and-estimate', upload.single('file'), async (req, res) => 
       }
     })
 
-    console.log(`\n===== Row grouping =====`)
-    rows.forEach((r,i) => {
-      console.log(`Row ${i} (Y:${r.avgY.toFixed(1)}) ->`,
-        r.words.map(w => w.text).join(' | ')
-      )
-    })
-
     // Build ordered lines
     const structuredLines = rows.map(r =>
-      r.words
-        .sort((a,b) => a.avgX - b.avgX)
-        .map(w => w.text)
-        .join(' ')
+      r.words.sort((a, b) => a.avgX - b.avgX).map(w => w.text).join(' ')
     )
-
-    console.log(`\n===== Structured Lines =====`)
-    structuredLines.forEach((l, i) => console.log(`${i}:`, l))
-    console.log('===========================\n')
 
     // 2) Extract due line
     const patterns = [
@@ -98,7 +82,6 @@ router.post('/analyze-and-estimate', upload.single('file'), async (req, res) => 
       /TOTAL[:]?/i
     ]
     const dueLine = structuredLines.find(line => patterns.some(rx => rx.test(line)))
-    console.log('Matched dueLine:', dueLine)
 
     let finalAmount = null
     if (dueLine) {
@@ -126,36 +109,29 @@ ${fullText}
     }
 
     // 4) Determine final estimated value
-     const estimatedAmountValue = finalAmount
+    const estimatedAmountValue = finalAmount
       ? parseFloat(finalAmount.replace(/[^\d.]/g, ''))
       : parseFloat(aiReply.replace(/[^\d.]/g, '')) || 0
 
-    // Save to Firestore
+    // 5) Save to Firestore with dynamic ownerAddress
     const data = {
-      userId: 'demo-user',
+      userId,
+      ownerAddress,
       billText: fullText,
       insuranceName,
       estimatedAmount: estimatedAmountValue,
       donatedAmount: 0,
-      status: 'active',
       createdAt: new Date().toISOString()
     }
 
     console.log('Saving to Firestore:', data)
     let docRef
-    try {
-      if (db.collection) {
-        // Admin SDK or compat
-        docRef = await db.collection('donationRequests').add(data)
-      } else {
-        // Modular v9 client
-        docRef = await addDoc(collection(db, 'donationRequests'), data)
-      }
-      console.log('Firestore doc created:', docRef.id)
-    } catch (dbErr) {
-      console.error('Firestore save failed:', dbErr)
-      return res.status(500).json({ error: 'Failed to save to database' })
+    if (db.collection) {
+      docRef = await db.collection('donationRequests').add(data)
+    } else {
+      docRef = await addDoc(collection(db, 'donationRequests'), data)
     }
+    console.log('Firestore doc created:', docRef.id)
 
     return res.json({
       extractedText: fullText,
@@ -170,4 +146,5 @@ ${fullText}
 })
 
 export default router
+
 
