@@ -1,12 +1,12 @@
 import express from 'express'
 import multer from 'multer'
 import vision from '@google-cloud/vision'
-import path from path
 
 const router = express.Router()
-
 const upload = multer({ dest: 'uploads/' })
-const client = new vision.ImageAnnotatorClient()
+const client = new vision.ImageAnnotatorClient({
+  keyFilename: './keys/google-vision.json'
+})
 
 router.post('/analyze', upload.single('file'), async (req, res) => {
   try {
