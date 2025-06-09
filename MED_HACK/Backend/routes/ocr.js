@@ -10,7 +10,7 @@ import xrpl from 'xrpl'
 
 dotenv.config()
 const router = express.Router()
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY})
 
 const upload = multer({ dest: 'uploads/' })
 const visionClient = new vision.ImageAnnotatorClient({
@@ -72,46 +72,42 @@ router.post('/analyze-and-estimate', upload.single('file'), async (req, res) => 
     const structuredLines = rows.map(r =>
       r.words.sort((a, b) => a.avgX - b.avgX).map(w => w.text).join(' ')
     )
+    
+    //use gpt to check image
+    const prompt = `
+      You are a billing assistant. From the medical bill or invoice text below, extract ONLY the final amount the recipient is required to pay. Look for labels such as "Balance Due", "Amount Due", "Total Due", "Amount Payable", or similar.
 
-    // 2) Extract due line
-    const patterns = [
-      /PLEASE\s+PAY\s+THIS\s+AMOUNT[:]?/i,
-      /AMOUNT\s+DUE[:]?/i,
-      /PATIENT\s+RESPONSIBILITY[:]?/i,
-      /YOU\s+OWE[:]?/i,
-      /TOTAL[:]?/i
-    ]
-    const dueLine = structuredLines.find(line => patterns.some(rx => rx.test(line)))
+      - If there are multiple totals, choose the **Balance Due** or **Amount Due** as the final payable amount.
+      - Ignore subtotals, discounts, amounts already paid, and taxes unless they are the only possible line.
+      - Output only the amount (e.g., "USD 8,480.00" or "$8,480.00"), nothing else.
 
-    let finalAmount = null
-    if (dueLine) {
-      const m = dueLine.match(/\$?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/)
-      if (m) finalAmount = m[0].startsWith('$') ? m[0] : '$' + m[1]
-    }
-
-    // 3) Fallback to AI if no OCR match
-    let aiReply = null
-    if (!finalAmount) {
-      console.warn('No OCR match, using AI fallback')
-      const prompt = `
-You are a billing assistant. From the medical bill text below, extract the exact amount the patient needs to pay out-of-pocket. Ignore total charges and insurance payments.
-
-Medical Bill:
-${fullText}
-`
+      Medical Bill:
+      ${fullText}
+      `
       const completion = await openai.chat.completions.create({
         model: 'gpt-4o',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.2
       })
-      aiReply = completion.choices[0].message.content.trim()
-      console.log('AI reply:', aiReply)
+      const aiReply = completion.choices[0].message.content.trim()
+
+    // 3) extract amount if required
+
+    let finalAmount = null
+    const numMatch = aiReply.match(/(\$|USD)?\s*([\d,]+(\.\d{2})?)/i)
+    if (numMatch) {
+      finalAmount = numMatch[0].replace(/[^0-9.]/g, '')  // "8480.00"
     }
 
     // 4) Determine final estimated value
     const estimatedAmountValue = finalAmount
       ? parseFloat(finalAmount.replace(/[^\d.]/g, ''))
       : parseFloat(aiReply.replace(/[^\d.]/g, '')) || 0
+
+    //4.5 Generate a new wallet for this campaign/request
+    const campaignWallet = xrpl.Wallet.generate()
+    const campaignAddress = campaignWallet.address
+    const campaignSeed = campaignWallet.seed // store securely, never expose to public/frontend
 
     // 5) Save to Firestore with dynamic ownerAddress
     const data = {
@@ -121,7 +117,9 @@ ${fullText}
       insuranceName,
       estimatedAmount: estimatedAmountValue,
       donatedAmount: 0,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      campaignAddress,
+      campaignSeed
     }
 
     console.log('Saving to Firestore:', data)
