@@ -44,34 +44,6 @@ router.post('/analyze-and-estimate', upload.single('file'), async (req, res) => 
     if (!fullText) {
       return res.status(400).json({ error: 'No text detected in image' })
     }
-
-    // Convert to word blocks with average X/Y
-    const wordBlocks = result.textAnnotations.slice(1).map(w => {
-      const ys = w.boundingPoly.vertices.map(v => v.y || 0)
-      const xs = w.boundingPoly.vertices.map(v => v.x || 0)
-      return {
-        text: w.description,
-        avgY: ys.reduce((sum, y) => sum + y, 0) / ys.length,
-        avgX: xs.reduce((sum, x) => sum + x, 0) / xs.length
-      }
-    })
-
-    // Group into rows by Y proximity
-    const rows = []
-    wordBlocks.sort((a, b) => a.avgY - b.avgY).forEach(wb => {
-      const existing = rows.find(r => Math.abs(r.avgY - wb.avgY) < 10)
-      if (existing) {
-        existing.words.push(wb)
-        existing.avgY = (existing.avgY * (existing.words.length - 1) + wb.avgY) / existing.words.length
-      } else {
-        rows.push({ avgY: wb.avgY, words: [wb] })
-      }
-    })
-
-    // Build ordered lines
-    const structuredLines = rows.map(r =>
-      r.words.sort((a, b) => a.avgX - b.avgX).map(w => w.text).join(' ')
-    )
     
     //use gpt to check image
     const prompt = `
@@ -142,7 +114,6 @@ router.post('/analyze-and-estimate', upload.single('file'), async (req, res) => 
     return res.status(500).json({ error: 'Failed to process document and estimate cost' })
   }
 })
-
 export default router
 
 

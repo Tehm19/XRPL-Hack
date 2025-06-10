@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import xrplRoutes from './routes/xrpl.js';
 import ocrRoutes from './routes/ocr.js'
-import donateRoutes from './routes/donation.js'
+import escrowRoutes from './routes/monitor_wallet.js'
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -19,7 +19,8 @@ app.get('/', (req, res) => {
 // XRPL related routes
 app.use('/xrpl', xrplRoutes);
 app.use('/ocr', ocrRoutes)
-app.use('/donate', donateRoutes)
+app.use('/api', escrowRoutes)
+
 app.listen(port, () => {
   console.log(`Backend server running at http://localhost:${port}`);
 });
