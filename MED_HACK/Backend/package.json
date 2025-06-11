@@ -19,6 +19,7 @@
     "express": "^5.1.0",
     "firebase": "^11.9.0",
     "firebase-admin": "^13.4.0",
+    "node-cron": "^4.1.0",
     "openai": "^5.1.1",
     "xrpl": "^4.2.5"
   },
